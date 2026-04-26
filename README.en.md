@@ -12,8 +12,6 @@ instead of clicking through prompts in the app.
 
 > 🌏 **中文版**: [README.md](README.md)
 
-[![LINUXDO](https://img.shields.io/badge/%E7%A4%BE%E5%8C%BA-LINUXDO-0086c9?style=for-the-badge&labelColor=555555)](https://linux.do)
-
 ## How it works
 
 Codex shipped a stable hooks framework in April 2026, including a
