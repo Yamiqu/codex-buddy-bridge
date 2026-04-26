@@ -56,7 +56,7 @@ its native approval prompt. **Codex never hangs because of this bridge.**
 ## Install
 
 ```bash
-git clone https://github.com/<your-handle>/codex-buddy-bridge.git
+git clone https://github.com/Yamiqu/codex-buddy-bridge.git
 cd codex-buddy-bridge
 ./install.sh
 ```
