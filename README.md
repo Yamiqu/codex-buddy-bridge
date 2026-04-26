@@ -1,59 +1,53 @@
 # codex-buddy-bridge
 
-Route [Codex](https://developers.openai.com/codex) `PermissionRequest` hooks
-to the BLE "buddy" hardware ecosystem from
-[anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy).
-Press a button on a tiny ESP32 device to approve or deny Codex actions
-instead of clicking through prompts in the app.
+把 [Codex](https://developers.openai.com/codex) 的 `PermissionRequest` hook
+桥接到 [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
+的 BLE "buddy" 硬件生态。在一台小小的 ESP32 设备上按按键来批准或拒绝 Codex
+的动作，不必再去应用里点弹窗。
 
-> **Not affiliated with Anthropic or OpenAI.** This is an independent
-> third-party project. "Codex" and "Claude" are trademarks of their
-> respective owners.
+> **本项目与 Anthropic 和 OpenAI 均无任何关联。** 这是一个独立的第三方项目。
+> "Codex" 是 OpenAI 的商标，"Claude" 是 Anthropic 的商标。
 
-> 🌏 **中文版**: [README.zh-CN.md](README.zh-CN.md)
+> 🌏 **English**: [README.en.md](README.en.md)
 
-## How it works
+[![LINUXDO](https://img.shields.io/badge/%E7%A4%BE%E5%8C%BA-LINUXDO-0086c9?style=for-the-badge&labelColor=555555)](https://linux.do)
 
-Codex shipped a stable hooks framework in April 2026, including a
-`PermissionRequest` hook that fires whenever the agent is about to ask the
-user for an approval (shell command, `apply_patch`, MCP tool call, …).
-This project plugs that hook into the existing Claude Desktop Buddy BLE
-protocol:
+## 工作原理
+
+Codex 在 2026 年 4 月推出了 stable hooks 框架，其中 `PermissionRequest` hook
+会在 agent 即将弹出审批（shell 命令、`apply_patch`、MCP 工具调用等）时触发。
+本项目把这个 hook 接到既有的 Claude Desktop Buddy BLE 协议上：
 
 ```
-Codex (CLI or Desktop) ─▶ PermissionRequest hook (stdin JSON)
+Codex (CLI 或 Desktop) ─▶ PermissionRequest hook（stdin JSON）
                           │
                           ▼  (Unix socket /tmp/codex-buddy.sock)
-                       daemon ─▶ on-demand BLE NUS connection
+                       daemon ─▶ 按需 BLE NUS 连接
                           │     ▼
-                          │   M5 buddy firmware (unchanged)
-                          │     ▲  user presses A or B
+                          │   M5 buddy 固件（零改动）
+                          │     ▲  用户按 A 或 B
                           ▼     │
                    {"decision": "allow" | "deny"} ─▶ Codex stdout
 ```
 
-The daemon does **not** hold the BLE peripheral while idle. BLE is acquired
-only during an active approval (~3-5 s) and released immediately, so the
-same physical device can keep working with the Claude Desktop app the rest
-of the time.
+Daemon **平时不占用 BLE**。BLE 仅在审批触发时才临时获取（约 3-5 秒），结束后
+立即释放。所以同一台物理设备其余时间可以正常给 Claude Desktop 用。
 
-If the buddy is unreachable when an approval fires (Claude has it paired,
-device asleep, etc.), the hook returns no decision and Codex falls back to
-its native approval prompt. **Codex never hangs because of this bridge.**
+如果审批触发时 buddy 不可用（Claude 占着、设备睡了等），hook 会返回"无决策"，
+Codex 自动 fallback 到原生审批弹窗。**Codex 永远不会因为这个桥而卡死。**
 
-## Requirements
+## 环境要求
 
-- macOS (the daemon depends on `launchd` and Unix domain sockets).
-- A `Claude-…` BLE device running the firmware from
+- macOS（daemon 依赖 `launchd` 和 Unix domain socket）
+- 一台 `Claude-…` 名字的 BLE 设备，跑着
   [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
-  — any of the supported boards (M5StickC Plus, M5StickC S3, etc.) works.
-  No firmware modification is needed; this bridge speaks the same wire
-  protocol Claude does.
-- [Codex](https://developers.openai.com/codex) CLI or Desktop, **April 2026
-  build or newer** (stable hooks).
-- Python 3.9+.
+  的固件 —— 任何官方支持的开发板都行（M5StickC Plus、M5StickC S3 等）。
+  无需修改固件；本桥说的是和 Claude 完全相同的 wire protocol。
+- [Codex](https://developers.openai.com/codex) CLI 或 Desktop，
+  **2026 年 4 月版本或更新**（带 stable hooks）
+- Python 3.9+
 
-## Install
+## 安装
 
 ```bash
 git clone https://github.com/Yamiqu/codex-buddy-bridge.git
@@ -61,143 +55,135 @@ cd codex-buddy-bridge
 ./install.sh
 ```
 
-The installer:
+安装脚本会：
 
-1. Creates `.venv/` and installs `bleak`.
-2. Renders the launchd plist with absolute paths and `launchctl load`s it.
-   The daemon respawns on crash.
-3. Adds `[features]\ncodex_hooks = true` to `~/.codex/config.toml`.
-4. Writes `~/.codex/hooks.json` with a `PermissionRequest` entry pointing at
-   `hooks/permission_request.py`. Any existing `hooks.json` is backed up.
-5. Prints next manual steps.
+1. 创建 `.venv/` 并安装 `bleak`
+2. 用绝对路径渲染 launchd plist 并 `launchctl load`，daemon 自动重启
+3. 在 `~/.codex/config.toml` 里加 `[features]\ncodex_hooks = true`
+4. 把 `PermissionRequest` 配置写进 `~/.codex/hooks.json`，已存在的 hooks.json
+   会被备份
+5. 打印剩余的手动步骤
 
-After install:
+安装完成后：
 
-- **Restart Codex Desktop and any open Codex CLI sessions** so the
-  app-server reloads the hooks config.
-- **Approve the macOS Bluetooth prompt** the first time the daemon needs
-  the buddy. The prompt targets `.venv/bin/python3`; once granted,
-  launchd-spawned runs inherit the permission.
+- **重启 Codex Desktop 和已开的 Codex CLI session**，让 app-server 重新加载
+  hooks 配置
+- 第一次审批触发时，macOS 会弹**蓝牙权限请求**，目标是 `.venv/bin/python3`，
+  同意一次即可；之后 launchd 启动的 daemon 会继承这个权限
 
 ## CLI
 
-The bridge ships a small `codex-buddy` script for everyday control:
+桥附带一个小巧的 `codex-buddy` 脚本管理日常操作：
 
-| command | what it does |
+| 命令 | 作用 |
 | --- | --- |
-| `codex-buddy status` | is the agent loaded? + last 10 log lines |
-| `codex-buddy on` (or `start`) | `launchctl load` the agent |
-| `codex-buddy off` (or `stop`) | `launchctl unload`; releases BLE immediately |
-| `codex-buddy restart` | unload then load |
-| `codex-buddy log` | `tail -F` the daemon log |
-| `codex-buddy foreground` | stop the launchd copy and run the daemon in this terminal with `--debug`. Ctrl-C to quit; no respawn |
-| `codex-buddy probe` | scan BLE briefly and report what's visible — useful when the log says "No BLE device found" |
-| `codex-buddy uninstall` | unload, remove plist, remove `~/.codex/hooks.json` (backed up) |
+| `codex-buddy status` | agent 是否在跑 + 末尾 10 行日志 |
+| `codex-buddy on`（或 `start`） | `launchctl load` 启动 daemon |
+| `codex-buddy off`（或 `stop`） | `launchctl unload`，立即释放 BLE |
+| `codex-buddy restart` | unload 然后再 load |
+| `codex-buddy log` | `tail -F` daemon 日志 |
+| `codex-buddy foreground` | 停掉 launchd 那份，在当前终端 `--debug` 跑一份；Ctrl+C 退出后不重启 |
+| `codex-buddy probe` | 短暂扫描 BLE 并报告可见设备，日志报"找不到设备"时用 |
+| `codex-buddy uninstall` | unload，删 plist，删 `~/.codex/hooks.json`（备份） |
 
-Tip: drop an alias in your shell rc to make it global:
+建议在 shell rc 里加一个 alias 全局可用：
 
 ```bash
 alias cbuddy="$HOME/Documents/GitHub/codex-buddy-bridge/codex-buddy"
 ```
 
-## Verify
+## 验证
 
 ```bash
-# 1. unit tests
+# 1. 单元测试
 PYTHONPATH=. python3 -m unittest discover -s tests
 
-# 2. daemon log — should print "Daemon ready (on-demand BLE)"
+# 2. daemon 日志 —— 应该看到 "Daemon ready (on-demand BLE)"
 codex-buddy log
 
-# 3. mock a permission round-trip without involving Codex
-echo '{"event":"permission_request","payload":{"session_id":"s","turn_id":"t","tool_name":"Bash","tool_input":{"command":"ls","description":"list dir"}}}' \
+# 3. 不经过 Codex，直接模拟一次审批往返
+echo '{"event":"permission_request","payload":{"session_id":"s","turn_id":"t","tool_name":"Bash","tool_input":{"command":"ls","description":"列目录"}}}' \
   | nc -U /tmp/codex-buddy.sock
-# Buddy briefly connects, displays "Bash" / "list dir"; press A → nc prints
-# {"decision":"allow",...}; daemon disconnects within ~1 s.
+# buddy 短暂连上、显示 "Bash" / "列目录"；按 A → nc 打印
+# {"decision":"allow",...}；daemon 在约 1 秒内断开。
 
-# 4. end-to-end: ask Codex to do something needing approval; the buddy lights up.
+# 4. 端到端：让 Codex 跑一个需要审批的命令；buddy 会亮起。
 ```
 
-## Daemon flags
+## Daemon 参数
 
-`codex-buddy foreground` accepts the daemon's flags:
+`codex-buddy foreground` 接受 daemon 的命令行参数：
 
-| flag | default | meaning |
+| 参数 | 默认 | 含义 |
 | --- | --- | --- |
-| `--device-prefix` | `Claude-` | BLE name prefix to scan for |
-| `--address` | (none) | skip scanning, use this BLE address |
-| `--socket` | `/tmp/codex-buddy.sock` | Unix socket path |
-| `--debug` | off | verbose logging |
+| `--device-prefix` | `Claude-` | 扫描的 BLE 名字前缀 |
+| `--address` | (无) | 跳过扫描，直接用此地址 |
+| `--socket` | `/tmp/codex-buddy.sock` | Unix socket 路径 |
+| `--debug` | 关 | verbose 日志 |
 
-## Coexistence with Claude Hardware Buddy
+## 与 Claude Hardware Buddy 共存
 
-The buddy peripheral is a standard ESP32 BLE peripheral and supports **only
-one central at a time**. So at any moment the device talks to *either* the
-Claude Desktop app *or* this daemon — not both.
+buddy 是标准 ESP32 BLE peripheral，**一次只能被一个 central 连接**。所以任何
+时刻设备**要么和 Claude Desktop 通信，要么和本 daemon 通信**，不能同时。
 
-- **Claude is paired right now** → the daemon's BLE scan returns nothing
-  (the peripheral stops advertising once connected) → hook returns no
-  decision → Codex falls back to its native approval UI. No hang, no error.
-- **Nobody is paired** → the daemon connects in a few seconds, shows the
-  approval on the buddy, releases the connection after the press, and
-  Claude Desktop can re-pair right after.
+- **Claude 此刻正连着** → daemon 扫描扫不到任何东西（peripheral 一旦被连上
+  就停止广播）→ hook 返回无决策 → Codex 走原生审批 UI。不卡、不报错。
+- **没人连着** → daemon 几秒内连上 buddy，把审批显示出来，按完后立即释放，
+  Claude Desktop 可以马上重连。
 
-If you want to silence the daemon entirely while focusing on Claude, run
-`codex-buddy off`; `codex-buddy on` re-enables it.
+如果你想专心用 Claude、彻底让 daemon 闭嘴，跑 `codex-buddy off` 即可，要用
+Codex 时再 `codex-buddy on`。
 
-## Troubleshooting
+## 故障排查
 
-Walk these layers in order — each is independent.
+按下面的顺序逐层排查，每层独立：
 
-**1. Claude Hardware Buddy stopped working.** Run `codex-buddy off`. That
-releases BLE. If Claude still can't see the device, this bridge isn't the
-cause; debug Claude / firmware separately.
+**1. Claude Hardware Buddy 不工作了。** 跑 `codex-buddy off`，BLE 立即释放。
+如果 Claude 还是看不到设备，那就不是这个桥的问题，去单独排查 Claude / 固件。
 
-**2. Codex approval doesn't reach the buddy.** Check the log:
+**2. Codex 审批没到 buddy。** 看日志：
 ```bash
 codex-buddy log
 ```
-You should see `Pending approval c-… for Bash: …` followed by either a
-decision or `BLE connect failed` (someone else has the device).
+应当看到 `Pending approval c-… for Bash: …`，紧接着要么是一条决策，要么是
+`BLE connect failed`（说明设备被别人占着）。
 
-If nothing shows up at all when Codex asks for approval, the hook config is
-the culprit:
+如果 Codex 提交审批时日志里**什么都没有**，那就是 hook 配置的问题：
 ```bash
-grep -A1 features ~/.codex/config.toml      # codex_hooks = true
+grep -A1 features ~/.codex/config.toml      # 应当有 codex_hooks = true
 cat ~/.codex/hooks.json | python3 -m json.tool
 ```
-After config changes, **restart Codex** (the app-server caches the config
-at startup).
+改完配置后**必须重启 Codex**（app-server 启动时会缓存配置）。
 
-**3. "No BLE device found" in the log.** Run `codex-buddy probe` — it
-scans for a few seconds and reports what's visible, with diagnostics.
+**3. 日志写"No BLE device found"。** 跑 `codex-buddy probe`，它会扫几秒然后
+报告周围所有可见的 BLE 设备，带诊断提示。
 
-**4. Daemon won't start.** `codex-buddy status` to see launchd state, then
-`codex-buddy foreground` to watch startup errors live.
+**4. Daemon 起不来。** `codex-buddy status` 看 launchd 状态，再
+`codex-buddy foreground` 在终端实时看启动错误。
 
-**5. Hook script smoke test.**
+**5. Hook 脚本冒烟测试**：
 ```bash
 echo '{"session_id":"s","turn_id":"t","tool_name":"Bash","tool_input":{"command":"ls"}}' \
   | hooks/permission_request.py
 ```
-Returns within ~110 s with the Codex JSON, or empty if the daemon is down
-(in which case Codex falls back to its native prompt — by design). The
-script writes diagnostics to stderr and never crashes Codex.
+约 110 秒内会返回 Codex 要的 JSON，daemon 不在时返回空（这种情况下 Codex 会
+fallback 到原生审批，是设计预期）。脚本所有诊断都走 stderr，绝不会让 Codex
+崩。
 
-## Architecture
+## 项目结构
 
 ```
 codex_buddy_bridge/
 ├── __main__.py        argparse + asyncio.run(daemon.main(...))
-├── daemon.py          on-demand approval flow, request id synthesis
-├── ipc.py             async server, sync stdlib client (used by hooks)
-├── ble_transport.py   bleak NUS client (one connect per approval)
-└── protocol.py        wire JSON: time, owner, snapshot, prompt, decisions
+├── daemon.py          按需审批流程，request id 合成
+├── ipc.py             async 服务端，hook 用的同步 stdlib 客户端
+├── ble_transport.py   bleak NUS 客户端（一次审批一次连接）
+└── protocol.py        wire JSON：time / owner / snapshot / prompt / decisions
 hooks/
-└── permission_request.py  IPC client; blocks until daemon answers
+└── permission_request.py  IPC 客户端，阻塞等 daemon 回执
 scripts/
-└── probe.py               ad-hoc BLE scanner used by `codex-buddy probe`
-codex-buddy             CLI: status / on / off / log / foreground / probe / uninstall
+└── probe.py               BLE 扫描脚本，被 `codex-buddy probe` 调用
+codex-buddy             CLI：status / on / off / log / foreground / probe / uninstall
 launchd/
 └── com.claudecodebuddy.codex-buddy.plist.template
 install.sh
@@ -205,29 +191,30 @@ requirements.txt
 tests/
 ```
 
-## Compatibility notes
+## 兼容性说明
 
-- **Codex hooks were stable in April 2026.** Earlier builds either don't
-  have `PermissionRequest` or use a different schema. Run
-  `codex --version` and update if hooks don't fire.
-- **Codex Desktop App vs. CLI.** Hooks fire in Codex's app-server, which
-  both clients use, so this bridge works for both.
-- **macOS only.** The bridge depends on launchd and Unix sockets. The
-  protocol layer is portable; a Linux systemd-user unit would be a small
-  additional file. PRs welcome.
-- **Firmware is unchanged.** The wire format (NUS UUIDs, snapshot fields,
-  permission decision shape) follows the
+- **Codex hooks 在 2026 年 4 月才稳定**。更早的版本要么没有
+  `PermissionRequest`，要么字段不一样。如果 hook 不触发，先 `codex --version`
+  看看版本然后升级。
+- **Codex Desktop App 与 CLI 通用**。Hook 在 Codex 的 app-server 触发，两边
+  共用，所以这个桥两边都能用。
+- **仅 macOS**。Daemon 依赖 launchd 和 Unix socket。协议层是平台无关的；
+  Linux 上加一个 systemd-user unit 应该不难，欢迎 PR。
+- **固件零改动**。Wire format（NUS UUID、snapshot 字段、审批决策格式）严格
+  遵循
   [REFERENCE.md](https://github.com/anthropics/claude-desktop-buddy/blob/main/REFERENCE.md)
-  protocol the Claude Desktop app speaks. The same `Claude-…` device works
-  for both hosts.
+  里 Claude Desktop 用的协议。同一台 `Claude-…` 设备给两边轮流用。
 
-## Acknowledgments
+## 致谢
 
-- [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
-  for the firmware, the wire protocol reference, and the maker-friendly
-  attitude that made this bridge possible.
-- OpenAI for shipping the `PermissionRequest` hook on a stable surface.
+- [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)：
+  提供了固件、wire protocol 文档，以及鼓励 maker 生态的开放态度，本桥才能做出来。
+- OpenAI：把 `PermissionRequest` hook 落到了 stable surface 上。
 
-## License
+## 许可
 
-[MIT](LICENSE).
+[MIT](LICENSE)。
+
+## Friendly Links
+
+[![LINUXDO](https://img.shields.io/badge/%E7%A4%BE%E5%8C%BA-LINUXDO-0086c9?style=for-the-badge&labelColor=555555)](https://linux.do)
