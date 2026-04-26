@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Codex Buddy Bridge — quick CLI for daemon control.
+#
+# Subcommands:
+#   on / start     load the launchd agent (daemon starts running)
+#   off / stop     unload the launchd agent (daemon exits, releases BLE)
+#   restart        unload then load
+#   status         show whether the agent is loaded + last 10 log lines
+#   log            tail -f the daemon log
+#   foreground     stop the launchd copy and run the daemon in this terminal
+#                  with --debug. Ctrl-C to quit; it does NOT respawn.
+#   probe          scan BLE briefly and report what's visible — use when the
+#                  daemon log says 'No BLE device found'.
+#   uninstall      unload the agent and remove the plist + ~/.codex/hooks.json
+
+set -euo pipefail
+
+PLIST_LABEL="com.claudecodebuddy.codex-buddy"
+PLIST_PATH="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
+LOG_PATH="${HOME}/Library/Logs/codex-buddy.log"
+HOOKS_JSON="${HOME}/.codex/hooks.json"
+BRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_PYTHON="${BRIDGE_ROOT}/.venv/bin/python3"
+
+usage() {
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+    exit "${1:-0}"
+}
+
+is_loaded() {
+    launchctl list 2>/dev/null | awk '{print $3}' | grep -qx "${PLIST_LABEL}"
+}
+
+load_agent() {
+    if [[ ! -f "${PLIST_PATH}" ]]; then
+        echo "error: ${PLIST_PATH} not found. Run install.sh first." >&2
+        exit 1
+    fi
+    if is_loaded; then
+        echo "already loaded"
+        return 0
+    fi
+    launchctl load -w "${PLIST_PATH}"
+    echo "loaded"
+}
+
+unload_agent() {
+    if ! is_loaded; then
+        echo "already unloaded"
+        return 0
+    fi
+    launchctl unload "${PLIST_PATH}"
+    echo "unloaded; BLE released"
+}
+
+case "${1:-status}" in
+    on|start)        load_agent ;;
+    off|stop)        unload_agent ;;
+    restart)         unload_agent || true; load_agent ;;
+    status)
+        if is_loaded; then
+            echo "agent: LOADED (${PLIST_LABEL})"
+        else
+            echo "agent: NOT LOADED"
+        fi
+        echo "plist: ${PLIST_PATH}"
+        echo "log:   ${LOG_PATH}"
+        echo
+        echo "--- last 10 log lines ---"
+        if [[ -f "${LOG_PATH}" ]]; then
+            tail -n 10 "${LOG_PATH}"
+        else
+            echo "(no log yet)"
+        fi
+        ;;
+    log)
+        exec tail -F "${LOG_PATH}"
+        ;;
+    foreground|fg)
+        if is_loaded; then
+            echo "stopping launchd copy first..."
+            launchctl unload "${PLIST_PATH}"
+        fi
+        if [[ ! -x "${VENV_PYTHON}" ]]; then
+            echo "error: venv missing at ${VENV_PYTHON}. Run install.sh." >&2
+            exit 1
+        fi
+        cd "${BRIDGE_ROOT}"
+        exec "${VENV_PYTHON}" -m codex_buddy_bridge --debug "${@:2}"
+        ;;
+    probe)
+        if [[ ! -x "${VENV_PYTHON}" ]]; then
+            echo "error: venv missing at ${VENV_PYTHON}. Run install.sh." >&2
+            exit 1
+        fi
+        exec "${VENV_PYTHON}" "${BRIDGE_ROOT}/scripts/probe.py" "${@:2}"
+        ;;
+    uninstall)
+        unload_agent || true
+        rm -f "${PLIST_PATH}" && echo "removed ${PLIST_PATH}"
+        if [[ -f "${HOOKS_JSON}" ]]; then
+            cp "${HOOKS_JSON}" "${HOOKS_JSON}.uninstall.bak"
+            rm -f "${HOOKS_JSON}"
+            echo "removed ${HOOKS_JSON} (backed up to ${HOOKS_JSON}.uninstall.bak)"
+        fi
+        echo "Note: codex_hooks = true in ~/.codex/config.toml was left in place; remove manually if you want."
+        ;;
+    -h|--help|help)
+        usage 0
+        ;;
+    *)
+        echo "unknown command: $1" >&2
+        usage 1
+        ;;
+esac
