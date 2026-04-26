@@ -10,8 +10,6 @@
 
 > 🌏 **English**: [README.en.md](README.en.md)
 
-[![LINUXDO](https://img.shields.io/badge/%E7%A4%BE%E5%8C%BA-LINUXDO-0086c9?style=for-the-badge&labelColor=555555)](https://linux.do)
-
 ## 工作原理
 
 Codex 在 2026 年 4 月推出了 stable hooks 框架，其中 `PermissionRequest` hook
