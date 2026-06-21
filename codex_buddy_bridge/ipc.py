@@ -15,8 +15,23 @@ import os
 import socket
 from collections.abc import Awaitable, Callable
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
-DEFAULT_SOCKET_PATH = "/tmp/codex-buddy.sock"
+DEFAULT_TCP_HOST = "127.0.0.1"
+DEFAULT_TCP_PORT = 8765
+
+
+def supports_unix_sockets() -> bool:
+    return hasattr(socket, "AF_UNIX") and hasattr(asyncio, "start_unix_server")
+
+
+def _default_endpoint() -> str:
+    if supports_unix_sockets():
+        return "/tmp/codex-buddy.sock"
+    return f"tcp://{DEFAULT_TCP_HOST}:{DEFAULT_TCP_PORT}"
+
+
+DEFAULT_SOCKET_PATH = _default_endpoint()
 
 EventHandler = Callable[[Dict[str, Any]], Awaitable[Optional[Dict[str, Any]]]]
 
@@ -29,7 +44,9 @@ async def serve(socket_path: str, handler: EventHandler) -> asyncio.AbstractServ
     for ``server.close()`` / ``server.wait_closed()`` on shutdown.
     """
     log = logging.getLogger("codex-buddy.ipc")
-    _unlink_if_exists(socket_path)
+    endpoint = _parse_endpoint(socket_path)
+    if endpoint["kind"] == "unix":
+        _unlink_if_exists(socket_path)
 
     async def on_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -57,8 +74,15 @@ async def serve(socket_path: str, handler: EventHandler) -> asyncio.AbstractServ
                 writer.close()
                 await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(on_connection, path=socket_path)
-    os.chmod(socket_path, 0o600)
+    if endpoint["kind"] == "unix":
+        server = await asyncio.start_unix_server(on_connection, path=socket_path)
+        os.chmod(socket_path, 0o600)
+    else:
+        server = await asyncio.start_server(
+            on_connection,
+            host=endpoint["host"],
+            port=endpoint["port"],
+        )
     log.info("IPC server listening on %s", socket_path)
     return server
 
@@ -108,7 +132,34 @@ def send_and_wait(
 
 
 def _connect(socket_path: str, timeout: float) -> socket.socket:
+    endpoint = _parse_endpoint(socket_path)
+    if endpoint["kind"] == "tcp":
+        return socket.create_connection((endpoint["host"], endpoint["port"]), timeout=timeout)
+
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(timeout)
-    sock.connect(socket_path)
-    return sock
+    try:
+        sock.connect(socket_path)
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+
+def endpoint_has_filesystem_artifact(socket_path: str) -> bool:
+    return _parse_endpoint(socket_path)["kind"] == "unix"
+
+
+def _parse_endpoint(socket_path: str) -> dict[str, Any]:
+    if socket_path.startswith("tcp://"):
+        parsed = urlparse(socket_path)
+        if not parsed.hostname or parsed.port is None:
+            raise ValueError(f"Invalid TCP IPC endpoint: {socket_path!r}")
+        return {"kind": "tcp", "host": parsed.hostname, "port": parsed.port}
+
+    if not supports_unix_sockets():
+        raise RuntimeError(
+            "Unix domain sockets are not supported on this platform; "
+            "set CODEX_BUDDY_SOCKET to a tcp://127.0.0.1:PORT endpoint."
+        )
+    return {"kind": "unix", "path": socket_path}

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 import tempfile
 import threading
 import unittest
@@ -10,14 +11,15 @@ from codex_buddy_bridge import ipc
 class IpcTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.socket_path = os.path.join(self.tmpdir, "test.sock")
+        self.socket_path = _make_test_endpoint(self.tmpdir)
 
     def tearDown(self):
-        for path in (self.socket_path,):
-            try:
-                os.unlink(path)
-            except FileNotFoundError:
-                pass
+        if ipc.endpoint_has_filesystem_artifact(self.socket_path):
+            for path in (self.socket_path,):
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
         os.rmdir(self.tmpdir)
 
     def _serve_in_thread(self, handler, ready: threading.Event):
@@ -105,12 +107,30 @@ class IpcTests(unittest.TestCase):
                 pass
 
     def test_send_oneshot_returns_false_when_socket_missing(self):
-        ok = ipc.send_oneshot("/tmp/codex-buddy-does-not-exist.sock", {"event": "x"})
+        ok = ipc.send_oneshot(_missing_endpoint(), {"event": "x"})
         self.assertFalse(ok)
 
     def test_send_and_wait_returns_none_when_socket_missing(self):
-        result = ipc.send_and_wait("/tmp/codex-buddy-does-not-exist.sock", {"event": "x"}, timeout=0.5)
+        result = ipc.send_and_wait(_missing_endpoint(), {"event": "x"}, timeout=0.5)
         self.assertIsNone(result)
+
+
+def _make_test_endpoint(tmpdir: str) -> str:
+    if ipc.supports_unix_sockets():
+        return os.path.join(tmpdir, "test.sock")
+    return f"tcp://127.0.0.1:{_reserve_tcp_port()}"
+
+
+def _missing_endpoint() -> str:
+    if ipc.supports_unix_sockets():
+        return "/tmp/codex-buddy-does-not-exist.sock"
+    return f"tcp://127.0.0.1:{_reserve_tcp_port()}"
+
+
+def _reserve_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
 
 
 if __name__ == "__main__":

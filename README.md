@@ -10,6 +10,42 @@
 
 > 🌏 **English**: [README.en.md](README.en.md)
 
+## 关联项目
+
+- 固件项目：[`therealarnold666/claude-desktop-buddy-s3`](https://github.com/therealarnold666/claude-desktop-buddy-s3)
+- 本仓库负责 host 侧 daemon / hooks / BLE 状态同步与审批桥接。
+- 固件仓库负责 StickS3 端 UI、动画、功耗策略与 BLE 外设实现。
+- 两者通过同一套 BLE NUS + JSON 协议协作：bridge 下发状态，固件渲染与交互。
+
+## 相对上游 fork 的改动
+
+本仓库在上游 `Yamiqu/codex-buddy-bridge` 基础上，增加了以下能力：
+
+- Hook 覆盖面从 `PermissionRequest` 扩展到
+  `SessionStart + UserPromptSubmit + Stop`，并在 daemon 内做 turn 级运行态管理。
+- 增加 `interactive_waiting` 状态线：
+  - 从 session JSONL 增量解析 `request_user_input` 自动推断开始/结束
+  - 与 approval waiting 聚合输出到同一 `waiting` 计数（保持 BLE 协议兼容）
+  - `msg` 区分来源（`approve:*` / `input needed` / `choice needed`）
+- `running` 改为按 turn 统计，支持同 session 内连续对话，不再只靠新建 session。
+- `sessions` 改为扫描 `~/.codex/sessions/**/*.jsonl` 的真实数量，并周期性重扫。
+- token 统计改为“每轮 Stop 时按 session 文件计算增量”，并维护 host 端账本：
+  - 累计 token
+  - `tokens_today`
+  - 每 session 绝对值基线
+- 状态同步增加事件重试窗口，降低 BLE 占空时漏帧导致的 busy 卡住问题。
+- CLI 新增 `codex-buddy pair`（Linux）：
+  通过 `bluetoothctl` 执行 `pair/trust/connect`。
+
+## Interactive Waiting 说明
+
+- 当前 Codex 稳定 hooks 只包含：
+  `PermissionRequest / SessionStart / UserPromptSubmit / Stop`。
+- 因此 interactive 问答不是靠额外 hook 事件，而是 daemon 从
+  `~/.codex/sessions/**/*.jsonl` 增量解析 `request_user_input` 与其结束信号推断。
+- 推断到 interactive 后，bridge 会下发 waiting 状态并触发 stick 的 attention 提醒；
+  结束后自动恢复 busy 或 idle。
+
 ## 工作原理
 
 Codex 在 2026 年 4 月推出了 stable hooks 框架，其中 `PermissionRequest` hook
@@ -82,6 +118,7 @@ cd codex-buddy-bridge
 | `codex-buddy log` | `tail -F` daemon 日志 |
 | `codex-buddy foreground` | 停掉 launchd 那份，在当前终端 `--debug` 跑一份；Ctrl+C 退出后不重启 |
 | `codex-buddy probe` | 短暂扫描 BLE 并报告可见设备，日志报"找不到设备"时用 |
+| `codex-buddy pair` | Linux 下通过 `bluetoothctl` 执行配对/信任/连接（支持 `--prefix` 或 `--mac`） |
 | `codex-buddy uninstall` | unload，删 plist，删 `~/.codex/hooks.json`（备份） |
 
 建议在 shell rc 里加一个 alias 全局可用：
@@ -181,7 +218,8 @@ hooks/
 └── permission_request.py  IPC 客户端，阻塞等 daemon 回执
 scripts/
 └── probe.py               BLE 扫描脚本，被 `codex-buddy probe` 调用
-codex-buddy             CLI：status / on / off / log / foreground / probe / uninstall
+└── pair.sh                Linux 配对助手，被 `codex-buddy pair` 调用
+codex-buddy             CLI：status / on / off / log / foreground / probe / pair / uninstall
 launchd/
 └── com.claudecodebuddy.codex-buddy.plist.template
 install.sh

@@ -11,6 +11,8 @@
 #                  with --debug. Ctrl-C to quit; it does NOT respawn.
 #   probe          scan BLE briefly and report what's visible — use when the
 #                  daemon log says 'No BLE device found'.
+#   pair           Linux helper: pair/trust/connect a Claude-* buddy via
+#                  bluetoothctl (supports --prefix / --mac).
 #   uninstall      unload the agent and remove the plist + ~/.codex/hooks.json
 
 set -euo pipefail
@@ -21,6 +23,7 @@ LOG_PATH="${HOME}/Library/Logs/codex-buddy.log"
 HOOKS_JSON="${HOME}/.codex/hooks.json"
 BRIDGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PYTHON="${BRIDGE_ROOT}/.venv/bin/python3"
+PAIR_SCRIPT="${BRIDGE_ROOT}/scripts/pair.sh"
 
 usage() {
     sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
@@ -94,6 +97,13 @@ case "${1:-status}" in
             exit 1
         fi
         exec "${VENV_PYTHON}" "${BRIDGE_ROOT}/scripts/probe.py" "${@:2}"
+        ;;
+    pair)
+        if [[ ! -x "${PAIR_SCRIPT}" ]]; then
+            echo "error: pair helper missing at ${PAIR_SCRIPT}" >&2
+            exit 1
+        fi
+        exec "${PAIR_SCRIPT}" "${@:2}"
         ;;
     uninstall)
         unload_agent || true

@@ -12,6 +12,32 @@ instead of clicking through prompts in the app.
 
 > 🌏 **中文版**: [README.md](README.md)
 
+## Related Repository
+
+- Firmware repo: [`therealarnold666/claude-desktop-buddy-s3`](https://github.com/therealarnold666/claude-desktop-buddy-s3)
+- This repo owns host-side daemon/hooks/BLE approval bridging.
+- The firmware repo owns StickS3 UI, animation, power policy, and BLE peripheral behavior.
+- They work together over the same BLE NUS + JSON protocol: bridge pushes state, firmware renders and handles button interaction.
+
+## Delta From Upstream Fork
+
+Compared with upstream `Yamiqu/codex-buddy-bridge`, this repo adds:
+
+- Hook coverage beyond `PermissionRequest`:
+  `SessionStart + UserPromptSubmit + Stop`, with turn-level runtime state.
+- `running` is now tracked per turn (not just session-start counting),
+  so continued conversation in the same session updates buddy state correctly.
+- `sessions` now comes from real disk scan of
+  `~/.codex/sessions/**/*.jsonl`, plus periodic rescan.
+- Token accounting switched to per-turn delta on `Stop`, with host ledger
+  persistence for:
+  - lifetime total
+  - `tokens_today`
+  - per-session absolute baselines
+- Event state-sync retry window to reduce dropped `running=0` updates when
+  BLE advertising is duty-cycled.
+- New Linux CLI command: `codex-buddy pair` (`bluetoothctl` pair/trust/connect helper).
+
 ## How it works
 
 Codex shipped a stable hooks framework in April 2026, including a
@@ -92,6 +118,7 @@ The bridge ships a small `codex-buddy` script for everyday control:
 | `codex-buddy log` | `tail -F` the daemon log |
 | `codex-buddy foreground` | stop the launchd copy and run the daemon in this terminal with `--debug`. Ctrl-C to quit; no respawn |
 | `codex-buddy probe` | scan BLE briefly and report what's visible — useful when the log says "No BLE device found" |
+| `codex-buddy pair` | Linux helper that runs `bluetoothctl` pair/trust/connect (supports `--prefix` or `--mac`) |
 | `codex-buddy uninstall` | unload, remove plist, remove `~/.codex/hooks.json` (backed up) |
 
 Tip: drop an alias in your shell rc to make it global:
@@ -197,7 +224,8 @@ hooks/
 └── permission_request.py  IPC client; blocks until daemon answers
 scripts/
 └── probe.py               ad-hoc BLE scanner used by `codex-buddy probe`
-codex-buddy             CLI: status / on / off / log / foreground / probe / uninstall
+└── pair.sh               Linux pairing helper used by `codex-buddy pair`
+codex-buddy             CLI: status / on / off / log / foreground / probe / pair / uninstall
 launchd/
 └── com.claudecodebuddy.codex-buddy.plist.template
 install.sh

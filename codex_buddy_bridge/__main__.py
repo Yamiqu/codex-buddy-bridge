@@ -15,7 +15,11 @@ def main() -> None:
     )
     parser.add_argument("--device-prefix", default="Claude-", help="BLE device name prefix to scan for.")
     parser.add_argument("--address", help="BLE address/identifier (skips scan).")
-    parser.add_argument("--socket", default=DEFAULT_SOCKET_PATH, help="Unix socket path for hook IPC.")
+    parser.add_argument(
+        "--socket",
+        default=DEFAULT_SOCKET_PATH,
+        help="Hook IPC endpoint. Unix socket path on POSIX, or tcp://127.0.0.1:PORT on Windows.",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable verbose logging.")
     args = parser.parse_args()
 
