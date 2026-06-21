@@ -11,7 +11,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$LogPath,
 
-    [string]$SocketEndpoint = "tcp://127.0.0.1:8876"
+    [string]$SocketEndpoint = "tcp://127.0.0.1:8765"
 )
 
 $ErrorActionPreference = "Continue"

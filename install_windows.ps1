@@ -6,7 +6,7 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $CodexDir = Join-Path $HOME ".codex"
 $ConfigToml = Join-Path $CodexDir "config.toml"
 $HooksJson = Join-Path $CodexDir "hooks.json"
-$SocketEndpoint = if ($env:CODEX_BUDDY_SOCKET) { $env:CODEX_BUDDY_SOCKET } else { "tcp://127.0.0.1:8876" }
+$SocketEndpoint = if ($env:CODEX_BUDDY_SOCKET) { $env:CODEX_BUDDY_SOCKET } else { "tcp://127.0.0.1:8765" }
 
 function Step([string]$Message) {
     Write-Host ""

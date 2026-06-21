@@ -1083,12 +1083,33 @@ class PermissionRequestFlowTests(_OnDemandDaemonTestBase):
             {"event": "stop", "payload": {"session_id": "s1", "turn_id": "t1", "stop_reason": "done"}},
         )
 
-        for _ in range(80):
-            await asyncio.sleep(0.02)
-            if len(FakeBleTransport.instances) >= 2 and FakeBleTransport.instances[-1].lines:
-                break
+        # The stop token delta is scanned off-thread and the per-turn `tokens`
+        # value is transient: stop emits tokens=120, then an idle heartbeat
+        # resets pending tokens back to 0 (tokens_today stays 120). Snapshots
+        # also fan out across multiple on-demand BLE transport instances. So
+        # search every emitted snapshot for the turn's growth report rather than
+        # assuming it is the last line of the last transport, which races.
+        def _emitted_snapshots():
+            snaps = []
+            for inst in FakeBleTransport.instances:
+                for line in inst.lines:
+                    try:
+                        snaps.append(json.loads(line))
+                    except (ValueError, TypeError):
+                        continue
+            return snaps
 
-        first_snapshot = json.loads(FakeBleTransport.instances[-1].lines[-1])
+        first_snapshot = None
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            match = [
+                s for s in _emitted_snapshots()
+                if s.get("tokens") == 120 and s.get("tokens_today") == 120
+            ]
+            if match:
+                first_snapshot = match[-1]
+                break
+        self.assertIsNotNone(first_snapshot, "stop did not report token growth of 120")
         self.assertEqual(first_snapshot["tokens"], 120)
         self.assertEqual(first_snapshot["tokens_today"], 120)
 
@@ -1110,12 +1131,19 @@ class PermissionRequestFlowTests(_OnDemandDaemonTestBase):
             {"event": "stop", "payload": {"session_id": "s1", "turn_id": "t2", "stop_reason": "done"}},
         )
 
-        for _ in range(80):
+        # Same transient/fan-out behavior for turn 2: look for the growth
+        # report (tokens=50, cumulative today=170) across all emissions.
+        snapshot = None
+        for _ in range(200):
             await asyncio.sleep(0.02)
-            if FakeBleTransport.instances and FakeBleTransport.instances[-1].lines:
+            match = [
+                s for s in _emitted_snapshots()
+                if s.get("tokens") == 50 and s.get("tokens_today") == 170
+            ]
+            if match:
+                snapshot = match[-1]
                 break
-
-        snapshot = json.loads(FakeBleTransport.instances[-1].lines[-1])
+        self.assertIsNotNone(snapshot, "second turn did not report growth of 50 (today=170)")
         self.assertEqual(snapshot["tokens"], 50)
         self.assertEqual(snapshot["tokens_today"], 170)
         ledger = json.loads(Path(self.config.token_ledger_path).read_text(encoding="utf-8"))

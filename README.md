@@ -36,6 +36,9 @@
 - 状态同步增加事件重试窗口，降低 BLE 占空时漏帧导致的 busy 卡住问题。
 - CLI 新增 `codex-buddy pair`（Linux）：
   通过 `bluetoothctl` 执行 `pair/trust/connect`。
+- 增加 **Windows 桌面端兼容**：`install_windows.ps1` + `scripts/hook_wrapper.ps1`。
+  Windows 上没有 Unix domain socket，daemon 与 hook 改走本地 TCP
+  （`tcp://127.0.0.1:8765`，与 `ipc.py` 默认端口一致）。
 
 ## Interactive Waiting 说明
 
@@ -45,6 +48,12 @@
   `~/.codex/sessions/**/*.jsonl` 增量解析 `request_user_input` 与其结束信号推断。
 - 推断到 interactive 后，bridge 会下发 waiting 状态并触发 stick 的 attention 提醒；
   结束后自动恢复 busy 或 idle。
+- **interactive 仅作提示**：stick 上只显示"有交互在等待"，**回答仍然需要在
+  Codex Desktop UI 里完成**——bridge 不会代替你提交选择（router 提交路径目前
+  未启用）。
+- 安装脚本同时注册了 `InteractiveStart` / `InteractiveEnd` 两个 hook，作为
+  **前向兼容**：未来发出这两个事件的 Codex 版本会直接走 hook；当前稳定版不发，
+  所以退回到上面的 JSONL 推断。daemon 两条路径都处理。
 
 ## 工作原理
 
@@ -72,7 +81,8 @@ Codex 自动 fallback 到原生审批弹窗。**Codex 永远不会因为这个�
 
 ## 环境要求
 
-- macOS（daemon 依赖 `launchd` 和 Unix domain socket）
+- macOS（daemon 依赖 `launchd` 和 Unix domain socket），或 Windows（见下方
+  Windows 安装小节，改走本地 TCP）
 - 一台 `Claude-…` 名字的 BLE 设备，跑着
   [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
   的固件 —— 任何官方支持的开发板都行（M5StickC Plus、M5StickC S3 等）。
@@ -94,8 +104,9 @@ cd codex-buddy-bridge
 1. 创建 `.venv/` 并安装 `bleak`
 2. 用绝对路径渲染 launchd plist 并 `launchctl load`，daemon 自动重启
 3. 在 `~/.codex/config.toml` 里加 `[features]\ncodex_hooks = true`
-4. 把 `PermissionRequest` 配置写进 `~/.codex/hooks.json`，已存在的 hooks.json
-   会被备份
+4. 把 hooks 配置写进 `~/.codex/hooks.json`（`PermissionRequest / SessionStart /
+   UserPromptSubmit / Stop`，以及前向兼容的 `InteractiveStart / InteractiveEnd`），
+   已存在的 hooks.json 会被备份
 5. 打印剩余的手动步骤
 
 安装完成后：
@@ -104,6 +115,25 @@ cd codex-buddy-bridge
   hooks 配置
 - 第一次审批触发时，macOS 会弹**蓝牙权限请求**，目标是 `.venv/bin/python3`，
   同意一次即可；之后 launchd 启动的 daemon 会继承这个权限
+
+### Windows
+
+Windows 没有 Unix domain socket，daemon 与 hook 之间改用本地 TCP
+（默认 `tcp://127.0.0.1:8765`，可用环境变量 `CODEX_BUDDY_SOCKET` 覆盖）：
+
+```powershell
+git clone https://github.com/Yamiqu/codex-buddy-bridge.git
+cd codex-buddy-bridge
+powershell -ExecutionPolicy Bypass -File .\install_windows.ps1
+```
+
+`install_windows.ps1` 会创建 venv、写 `~/.codex/hooks.json`（hook 通过
+`scripts/hook_wrapper.ps1` 调起），并打印 daemon 的启动命令。Windows 上
+daemon 不走 launchd，需要按脚本提示在终端里手动启动：
+
+```powershell
+& "<venv>\Scripts\python.exe" -m codex_buddy_bridge --socket tcp://127.0.0.1:8765 --debug
+```
 
 ## CLI
 
@@ -234,8 +264,10 @@ tests/
   看看版本然后升级。
 - **Codex Desktop App 与 CLI 通用**。Hook 在 Codex 的 app-server 触发，两边
   共用，所以这个桥两边都能用。
-- **仅 macOS**。Daemon 依赖 launchd 和 Unix socket。协议层是平台无关的；
-  Linux 上加一个 systemd-user unit 应该不难，欢迎 PR。
+- **macOS 与 Windows**。macOS 上 daemon 走 launchd + Unix socket；Windows 上
+  没有 Unix socket，daemon 与 hook 改走本地 TCP（`tcp://127.0.0.1:8765`），
+  且需手动启动 daemon（不走 launchd）。协议层本身平台无关；Linux 上加一个
+  systemd-user unit 应该不难，欢迎 PR。
 - **固件零改动**。Wire format（NUS UUID、snapshot 字段、审批决策格式）严格
   遵循
   [REFERENCE.md](https://github.com/anthropics/claude-desktop-buddy/blob/main/REFERENCE.md)

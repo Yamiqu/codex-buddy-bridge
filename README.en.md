@@ -34,9 +34,20 @@ Compared with upstream `Yamiqu/codex-buddy-bridge`, this repo adds:
   - lifetime total
   - `tokens_today`
   - per-session absolute baselines
+- New `interactive_waiting` state line: the daemon infers interactive
+  prompts by incrementally parsing `request_user_input` from session JSONL
+  and folds them into the same `waiting` counter as approval waiting (BLE
+  protocol stays compatible). **Indicator only:** the stick shows that a
+  prompt is waiting, but answers must still be submitted in the Codex
+  Desktop UI — the bridge does not submit choices for you (the router
+  submission path is intentionally not active).
 - Event state-sync retry window to reduce dropped `running=0` updates when
   BLE advertising is duty-cycled.
 - New Linux CLI command: `codex-buddy pair` (`bluetoothctl` pair/trust/connect helper).
+- **Windows desktop compatibility**: `install_windows.ps1` +
+  `scripts/hook_wrapper.ps1`. Windows has no Unix domain sockets, so the
+  daemon and hooks talk over local TCP (`tcp://127.0.0.1:8765`, matching the
+  `ipc.py` default port).
 
 ## How it works
 
@@ -69,7 +80,8 @@ its native approval prompt. **Codex never hangs because of this bridge.**
 
 ## Requirements
 
-- macOS (the daemon depends on `launchd` and Unix domain sockets).
+- macOS (the daemon depends on `launchd` and Unix domain sockets), or
+  Windows (see the Windows install section below; it uses local TCP instead).
 - A `Claude-…` BLE device running the firmware from
   [anthropics/claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
   — any of the supported boards (M5StickC Plus, M5StickC S3, etc.) works.
@@ -93,8 +105,10 @@ The installer:
 2. Renders the launchd plist with absolute paths and `launchctl load`s it.
    The daemon respawns on crash.
 3. Adds `[features]\ncodex_hooks = true` to `~/.codex/config.toml`.
-4. Writes `~/.codex/hooks.json` with a `PermissionRequest` entry pointing at
-   `hooks/permission_request.py`. Any existing `hooks.json` is backed up.
+4. Writes `~/.codex/hooks.json` with `PermissionRequest / SessionStart /
+   UserPromptSubmit / Stop` entries (plus forward-compatible
+   `InteractiveStart / InteractiveEnd`) pointing at the `hooks/` scripts.
+   Any existing `hooks.json` is backed up.
 5. Prints next manual steps.
 
 After install:
@@ -104,6 +118,27 @@ After install:
 - **Approve the macOS Bluetooth prompt** the first time the daemon needs
   the buddy. The prompt targets `.venv/bin/python3`; once granted,
   launchd-spawned runs inherit the permission.
+
+### Windows
+
+Windows has no Unix domain sockets, so the daemon and hooks communicate
+over local TCP (default `tcp://127.0.0.1:8765`, overridable via the
+`CODEX_BUDDY_SOCKET` environment variable):
+
+```powershell
+git clone https://github.com/Yamiqu/codex-buddy-bridge.git
+cd codex-buddy-bridge
+powershell -ExecutionPolicy Bypass -File .\install_windows.ps1
+```
+
+`install_windows.ps1` creates the venv, writes `~/.codex/hooks.json` (hooks
+are invoked through `scripts/hook_wrapper.ps1`), and prints the daemon start
+command. There is no launchd equivalent on Windows, so start the daemon
+manually in a terminal as the installer instructs:
+
+```powershell
+& "<venv>\Scripts\python.exe" -m codex_buddy_bridge --socket tcp://127.0.0.1:8765 --debug
+```
 
 ## CLI
 
@@ -240,8 +275,10 @@ tests/
   `codex --version` and update if hooks don't fire.
 - **Codex Desktop App vs. CLI.** Hooks fire in Codex's app-server, which
   both clients use, so this bridge works for both.
-- **macOS only.** The bridge depends on launchd and Unix sockets. The
-  protocol layer is portable; a Linux systemd-user unit would be a small
+- **macOS and Windows.** On macOS the daemon uses launchd + a Unix socket;
+  on Windows there is no Unix socket, so the daemon and hooks use local TCP
+  (`tcp://127.0.0.1:8765`) and the daemon is started manually (no launchd).
+  The protocol layer is portable; a Linux systemd-user unit would be a small
   additional file. PRs welcome.
 - **Firmware is unchanged.** The wire format (NUS UUIDs, snapshot fields,
   permission decision shape) follows the
